@@ -28,41 +28,41 @@ from funcparserlib.util import SyntaxError, pos_to_str
 
 class LexerError(SyntaxError):
     def __init__(self, msg, pos):
-        SyntaxError.__init__(self, u'cannot tokenize data: "%s"' % msg, pos)
+        SyntaxError.__init__(self, 'cannot tokenize data: "%s"' % msg, pos)
 
 class Token(object):
-    __slots__ = ['type', 'value', 'pos']
+    __slots__ = ['type', 'value', 'pos','case']
 
-    def __init__(self, type, value, pos=None):
+    def __init__(self, type, value, pos=None,case=True):
         self.type = type
         self.value = value
         self.pos = pos
+        self.case = case
 
     def __repr__(self):
         return 'Token(%r, %r)' % (self.type, self.value)
 
     def __eq__(self, other):
-        # FIXME: Case sensitivity is assumed here
         if not isinstance(other, Token):
             return False
-        return (self.type == other.type and
-                (self.value is None or
-                 other.value is None or
-                 self.value == other.value))
+        if not self.case and (str==self.value.__class__==other.__class__):
+            return self.value.lower()==other.value.lower()
+        else:
+            return self.value==other.value
 
     def __hash__(self):
         return hash(self.type) ^ hash(self.value) ^ hash(self.pos)
 
     def __unicode__(self):
-        return (u"%s '%s'" % (self.type, self.value)
+        return ("%s '%s'" % (self.type, self.value)
                 if self.value is not None
                 else self.type)
 
     def __str__(self):
-        return unicode(self).encode()
+        return str(self).encode()
 
     def pformat(self):
-        return u"%s %s '%s'" % (pos_to_str(self.pos).ljust(20),
+        return "%s %s '%s'" % (pos_to_str(self.pos).ljust(20),
             self.type.ljust(14), self.value)
 
     @property
@@ -70,9 +70,9 @@ class Token(object):
         return self.value
 
     def ebnf(self):
-        return (u"'%s'" % (self.value,)
+        return ("'%s'" % (self.value,)
                 if self.value is not None
-                else u'? %s ?' % (self.type,))
+                else '? %s ?' % (self.type,))
 
 class Spec(object):
     def __init__(self, type, regexp, flags=0):

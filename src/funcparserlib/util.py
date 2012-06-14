@@ -33,11 +33,11 @@ class SyntaxError(Exception):
 
     def __unicode__(self):
         pos = self.args[1]
-        s = u'%s: ' % pos_to_str(pos) if pos is not None else ''
-        return u'%s%s' % (s, self.args[0])
+        s = '%s: ' % pos_to_str(pos) if pos is not None else ''
+        return '%s%s' % (s, self.args[0])
 
     def __str__(self):
-        return unicode(self).encode()
+        return str(self).encode()
 
 def pretty_tree(x, kids, show):
     '''(a, (a -> list(a)), (a -> str)) -> str

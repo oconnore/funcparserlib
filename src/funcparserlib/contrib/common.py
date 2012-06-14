@@ -22,6 +22,7 @@
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 from funcparserlib.parser import skip, tok
+from functools import reduce
 
 __all__ = [
     'const', 'flatten', 'unarg', 'tokval', 'mktok', 'n', 'op', 'op_', 'sometok',
