@@ -31,13 +31,10 @@ class SyntaxError(Exception):
         'SyntaxError -> ((int, int), (int, int)) or None'
         return self.args[1]
 
-    def __unicode__(self):
+    def __str__(self):
         pos = self.args[1]
         s = '%s: ' % pos_to_str(pos) if pos is not None else ''
         return '%s%s' % (s, self.args[0])
-
-    def __str__(self):
-        return str(self).encode()
 
 def pretty_tree(x, kids, show):
     '''(a, (a -> list(a)), (a -> str)) -> str

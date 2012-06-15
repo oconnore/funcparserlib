@@ -1,49 +1,18 @@
-# -*- coding: utf-8 -*-
-
-# Copyright (c) 2008/2011 Andrey Vlasovskikh
 #
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
+# Funcparserlib -- A parser library based on parser combinators
+# by Andrey Vlasovskikh et al
 #
-# The above copyright notice and this permission notice shall be included
-# in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-"""A recurisve descent parsing library based on functional combinators.
-
-Basic combinators are taken from Harrison's book ["Introduction to Functional
-Programming"][1] and translated from ML into Python. See also [a Russian
-translation of the book][2].
-
-  [1]: http://www.cl.cam.ac.uk/teaching/Lectures/funprog-jrh-1996/
-  [2]: http://code.google.com/p/funprog-ru/
-
-"""
-
 
 __all__ = [
     'a', 'tok', 'many', 'fwd', 'eof', 'maybe', 'skip', 'oneplus',
     'name_parser_vars', 'SyntaxError', 'ParserError', 'memoize',
 ]
-
-
 from warnings import warn
 import logging
 from funcparserlib.lexer import Token
 from funcparserlib.util import SyntaxError
 
+# ----------------
 
 log = logging.getLogger('funcparserlib')
 

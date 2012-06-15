@@ -1,126 +1,278 @@
-# -*- coding: utf-8 -*-
-
-# Copyright (c) 2008/2011 Andrey Vlasovskikh
 #
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
+# Funcparserlib -- A parser library based on parser combinators
+# by Andrey Vlasovskikh et al
 #
-# The above copyright notice and this permission notice shall be included
-# in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-__all__ = ['make_tokenizer', 'Spec', 'Token', 'LexerError']
+__all__ = ['Slurp','Tokenizer','Spec','Token','LexerError','LineNumber']
+import re,io,os,os.path
 
-import re
-from funcparserlib.util import SyntaxError, pos_to_str
+# ----------------
 
-class LexerError(SyntaxError):
-    def __init__(self, msg, pos):
-        SyntaxError.__init__(self, 'cannot tokenize data: "%s"' % msg, pos)
+class Slurp:
+    """
+    A file/string/bytes slurping class for use by the lexer.
+    """
+    chunk=4096
+    def __init__(self,source,binary=False):
+        self._pos=0
+        self.pos=0
+        self.buffer='' if not binary else b''
+        self.binary=binary
+        if isinstance(source,str):
+            if binary==False:
+                self.buffer=source
+            else:
+                self.buffer=source.encode()
+        elif isinstance(source,bytes):
+            if binary==True:
+                self.buffer=source
+            else:
+                self.buffer=source.decode('utf8')
+        elif isinstance(source,io.IOBase):
+            self.stream=source
+    def _append(self,chunk):
+        if not any(map(lambda x: issubclass(chunk.__class__,x),[str,bytes])):
+            raise Exception('Unknown chunk {}'.format(chunk))
+        if self.binary:
+            if isinstance(chunk,bytes):
+                app=chunk
+            else:
+                app=chunk.encode()
+        else:
+            if isinstance(chunk,str):
+                app=chunk
+            else:
+                app=chunk.decode('utf8')
+        self.buffer=self.buffer[self._pos:]+app
+        self._pos=0
+    def _buffer(self):
+        if not hasattr(self,'stream'):
+            raise Exception('Not a buffered Slurp')
+        if isinstance(self.stream,io.IOBase):
+            tmp=self.stream.read(self.chunk)
+            if len(tmp)==0:
+                raise EOFError('stream exhausted')
+            self._append(tmp)
+        else:
+            raise Exception('Unknown stream type {}'.format(self.stream.__class__))
+    def next(self,n=None):
+        if not n:
+            n=self.chunk
+        def _inc(x):
+            ret=(self.buffer[self._pos:self._pos+x],self.pos)
+            self.pos+=x
+            self._pos+=x
+            return ret
+        if self._pos+n < len(self.buffer):
+            return _inc(n)
+        else:
+            try:
+                while self._pos+n > len(self.buffer):
+                    self._buffer()
+                return _inc(n)
+            except EOFError:
+                if self._pos < len(self.buffer):
+                    return _inc(min(len(self.buffer)-self._pos, n))
+                else:
+                    return None
+            except:
+                return _inc(len(self.buffer)-self._pos)
+    def __next__(self):
+        return self.next(1)
+    @property
+    def filename(self):
+        if hasattr(self,'stream'):
+            return os.path.normpath(os.path.join(os.getcwd(),self.stream.name))
+        else:
+            return ''
+
+# ----------------
+
+class LineNumber:
+    """
+    A line number tracker for the lexer
+    """
+    sep=re.compile(r'\r?\n')
+    sepb=re.compile(b'\r?\n')
+    def __init__(self):
+        self.lines=[]
+        self.pos=0
+    def track(self,string):
+        start=self.pos
+        if isinstance(string,str):
+            seps=self.sep.finditer(string)
+        elif isinstance(string,bytes):
+            seps=self.sepb.finditer(string)
+        else:
+            raise Exception('only string/bytes supported {}'.format(string))
+        ret=[]
+        for x in seps:
+            e=x.end()
+            self.lines.append(self.pos+e)
+            ret.append(e)
+        self.pos+=len(string)
+        return (len(self.lines),start,ret)
+    def find_last(self,pos):
+        ln=len(self.lines)
+        if pos<0:
+            raise Exception('invalid pos {}'.format(pos))
+        elif pos >= self.pos:
+            return (ln,None)
+        c=ln
+        val=lambda x: 0 if x==0 else self.lines[x-1]
+        while c>=0:
+            if pos >= val(c):
+                return (c,self.lines[c] if c < ln else None)
+            c-=1
+    def find(self,pos):
+        if pos<0:
+            raise Exception('invalid pos {}'.format(pos))
+        elif pos>self.lines[-1]:
+            return (len(self.lines),None)
+        lo,hi=0,len(self.lines)
+        val=lambda x: self.lines[x]
+        mid=lambda lo,hi: lo+(hi-lo)//2
+        cm=mid(lo,hi)
+        while lo<hi:
+            if pos >= val(cm):
+                lo=cm+1
+            else:
+                hi=cm
+            cm=mid(lo,hi)
+        alt=True if lo>=len(self.lines) else False
+        return (lo,val(lo) if not alt else None)
+
+# ----------------
 
 class Token(object):
     __slots__ = ['type', 'value', 'pos','case']
-
-    def __init__(self, type, value, pos=None,case=True):
-        self.type = type
-        self.value = value
-        self.pos = pos
-        self.case = case
-
-    def __repr__(self):
-        return 'Token(%r, %r)' % (self.type, self.value)
-
+    def __init__(self,type,value,start=None,case=True,lineno=None):
+        self.type=type
+        self.value=value
+        self.case=case
+        self.start=start
+        self.lineno=lineno
+    def val(self):
+        if self.case or not isinstance(self.value,str):
+            return self.value
+        else:
+            return self.value.lower()
     def __eq__(self, other):
         if not isinstance(other, Token):
             return False
-        if not self.case and (str==self.value.__class__==other.__class__):
-            return self.value.lower()==other.value.lower()
-        else:
-            return self.value==other.value
-
+        pre=self.type==other.type
+        none=self.value is None or other.value is None
+        eq=self.val()==obj.val()
+        return pre and (none or eq)
     def __hash__(self):
-        return hash(self.type) ^ hash(self.value) ^ hash(self.pos)
-
-    def __unicode__(self):
-        return ("%s '%s'" % (self.type, self.value)
-                if self.value is not None
-                else self.type)
-
-    def __str__(self):
-        return str(self).encode()
-
-    def pformat(self):
-        return "%s %s '%s'" % (pos_to_str(self.pos).ljust(20),
-            self.type.ljust(14), self.value)
-
-    @property
-    def name(self):
-        return self.value
-
+        return hash(self.type) ^ hash(self.value) ^ hash(self.start)
+    def __repr__(self):
+        return 'Token(%r,%r)' % (self.type, self.value)
     def ebnf(self):
         return ("'%s'" % (self.value,)
                 if self.value is not None
                 else '? %s ?' % (self.type,))
+    @property
+    def name(self):
+        return self.value
+    @property
+    def end(self):
+        return self.start+len(self.value)
+    @property
+    def linespan(self):
+        s=self.lineno.find(self.start)
+        if self.end < s[1]:
+            e=(self.end,s[1])
+        else:
+            e=self.lineno.find(self.end-1)
+        return ((s[0],self.start-s[1]),
+                (e[0],self.end-e[1]+1))
+
+# ----------------
 
 class Spec(object):
-    def __init__(self, type, regexp, flags=0):
-        self.type = type
-        self._regexp = regexp
-        self._flags = flags
-        # Maybe the regexp should be compiled lazily
-        self.re = re.compile(regexp, flags)
-
+    def __init__(self,type,regexp,flags=0,case=True,multiline=False):
+        self.type=type
+        self._regexp=regexp
+        self._flags=flags
+        if not case:
+            self._flags|=re.I
+        if multiline:
+            self._flags|=re.MULTILINE
+    @property
+    def re(self):
+        if hasattr(self,_re):
+            return self._re
+        else:
+            self._re=re.compile(self._regexp,self._flags)
+            return self._re
     def __repr__(self):
         return 'Spec(%r, %r, %r)' % (self.type, self._regexp, self._flags)
 
-def make_tokenizer(specs):
-    '[Spec] -> (str -> Iterable(Token))'
-    def tokenize(s):
-        length = len(s)
-        line, pos = 1, 0
-        i = 0
-        while i < length:
-            for spec in specs:
-                m = spec.re.match(s, i)
-                if m is not None:
-                    value = m.group()
-                    nls = value.count('\n')
-                    n_line = line + nls
-                    value_len = len(value)
-                    if nls == 0:
-                        n_pos = pos + value_len
-                    else:
-                        n_pos = value_len - value.rfind('\n') - 1
-                    yield Token(spec.type, value,
-                                ((line, pos + 1), (n_line, n_pos)))
-                    line, pos = n_line, n_pos
-                    i += value_len
+# ----------------
+
+class LexerError:
+    def __init__(self, msg, filename, line, column):
+        self.msg=msg
+        self.filename=filename
+        self.line=line
+        self.column=column
+    def __repr__(self):
+        return '#<LexerError {}:{}:{} ({})>'.format(
+            self.filename,
+            self.line,
+            self.column,
+            self.msg)
+
+# ----------------
+
+class Tokenizer:
+    def __init__(self,specs,binary=False):
+        self.specs=specs
+        self.binary=binary
+    def tokenize(self,slurp,chunk=4096):
+        ln=LineNumber()
+        gpos=0
+        pos=0
+        buf=b'' if self.binary else ''
+        def _buffer():
+            tmp=slurp.next(chunk)
+            ln.track(tmp)
+            buf=buf[pos:]+tmp
+            pos=0
+            gpos+=pos
+        cont,rem=True,True
+        while cont or rem:
+            cont=False
+            if rem and len(buf)-pos > chunk//2:
+                try:
+                    _buffer()
+                except EOFError:
+                    rem=False
+            for spec in self.specs:
+                m=spec.re.match(buf,pos)
+                if m:
+                    value=m.group()
+                    cont=True
+                    yield Token(spec.type,value,
+                                m.start,spec.case,ln)
                     break
             else:
-                errline = s.splitlines()[line - 1]
-                raise LexerError(errline,
-                                 ((line, pos + 1), (line, len(errline))))
-    return tokenize
+                line,linestart=ln.find_last(),
+                raise LexerError('No regex match in lexer',
+                                 slurp.filename,
+                                 line,
+                                 gpos-linestart)
+        
+# ----------------
 
 # This is an example of a token spec. See also [this article][1] for a
 # discussion of searching for multiline comments using regexps (including `*?`).
 #
 #   [1]: http://ostermiller.org/findcomment.html
 _example_token_specs = [
-    Spec('comment', r'\(\*(.|[\r\n])*?\*\)', re.MULTILINE),
-    Spec('comment', r'\{(.|[\r\n])*?\}', re.MULTILINE),
+    Spec('comment', r'\(\*(.|[\r\n])*?\*\)',multiline=True),
+    Spec('comment', r'\{(.|[\r\n])*?\}',multiline=True),
     Spec('comment', r'//.*'),
     Spec('nl',      r'[\r\n]+'),
     Spec('space',   r'[ \t\r\n]+'),
@@ -133,5 +285,5 @@ _example_token_specs = [
     Spec('char',    r'#[0-9]+'),
     Spec('char',    r'#\$[0-9A-Fa-f]+'),
 ]
-#tokenize = make_tokenizer(_example_token_specs)
+#tokenize=Tokenizer(_example_token_specs)
 
