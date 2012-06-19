@@ -124,6 +124,7 @@ class LineNumber:
             if pos >= val(c):
                 return (c,self.lines[c] if c < ln else None)
             c-=1
+        return (0,None)
     def find(self,pos):
         if pos<0:
             raise Exception('invalid pos {}'.format(pos))
@@ -144,8 +145,8 @@ class LineNumber:
 
 # ----------------
 
-class Token(object):
-    __slots__ = ['type', 'value', 'pos','case']
+class Token:
+    __slots__ = ['type', 'value', 'pos','case','start','lineno']
     def __init__(self,type,value,start=None,case=True,lineno=None):
         self.type=type
         self.value=value
@@ -195,13 +196,14 @@ class Spec(object):
         self.type=type
         self._regexp=regexp
         self._flags=flags
+        self.case=case
         if not case:
             self._flags|=re.I
         if multiline:
             self._flags|=re.MULTILINE
     @property
     def re(self):
-        if hasattr(self,_re):
+        if hasattr(self,'_re'):
             return self._re
         else:
             self._re=re.compile(self._regexp,self._flags)
@@ -230,35 +232,40 @@ class Tokenizer:
     def __init__(self,specs,binary=False):
         self.specs=specs
         self.binary=binary
-    def tokenize(self,slurp,chunk=4096):
+    def run(self,slurp,chunk=4096):
         ln=LineNumber()
         gpos=0
         pos=0
         buf=b'' if self.binary else ''
-        def _buffer():
-            tmp=slurp.next(chunk)
+        def _buffer(buf,pos):
+            tmp,_=slurp.next(chunk)
             ln.track(tmp)
             buf=buf[pos:]+tmp
             pos=0
-            gpos+=pos
+            return (buf,0)
         cont,rem=True,True
         while cont or rem:
             cont=False
-            if rem and len(buf)-pos > chunk//2:
+            if rem and len(buf)-pos < chunk//2:
                 try:
-                    _buffer()
+                    buf,pos=_buffer(buf,pos)
                 except EOFError:
                     rem=False
             for spec in self.specs:
                 m=spec.re.match(buf,pos)
+                print(buf,spec,m)
                 if m:
                     value=m.group()
+                    pos+=m.end()
+                    gpos+=m.end()
                     cont=True
                     yield Token(spec.type,value,
                                 m.start,spec.case,ln)
                     break
             else:
-                line,linestart=ln.find_last(),
+                print('lexer error',gpos,ln.lines)
+                line,linestart=ln.find_last(gpos)
+                raise Exception('regex match error at {}'.format(gpos))
                 raise LexerError('No regex match in lexer',
                                  slurp.filename,
                                  line,

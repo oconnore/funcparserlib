@@ -1,1 +1,2 @@
 *.pyc
+src/funcparserlib.egg-info/*
