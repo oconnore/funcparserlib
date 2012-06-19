@@ -8,6 +8,9 @@ import re,io,os,os.path
 
 # ----------------
 
+class NotStream(Exception):
+    pass
+
 class Slurp:
     """
     A file/string/bytes slurping class for use by the lexer.
@@ -46,15 +49,13 @@ class Slurp:
         self.buffer=self.buffer[self._pos:]+app
         self._pos=0
     def _buffer(self):
-        if not hasattr(self,'stream'):
-            raise Exception('Not a buffered Slurp')
-        if isinstance(self.stream,io.IOBase):
+        if hasattr(self,'stream') and isinstance(self.stream,io.IOBase):
             tmp=self.stream.read(self.chunk)
             if len(tmp)==0:
                 raise EOFError('stream exhausted')
             self._append(tmp)
         else:
-            raise Exception('Unknown stream type {}'.format(self.stream.__class__))
+            raise NotStream('Not a buffered Slurp')
     def next(self,n=None):
         if not n:
             n=self.chunk
@@ -71,12 +72,17 @@ class Slurp:
                     self._buffer()
                 return _inc(n)
             except EOFError:
-                if self._pos < len(self.buffer):
-                    return _inc(min(len(self.buffer)-self._pos, n))
+                next_chunk=len(self.buffer)-self._pos
+                if next_chunk > 0:
+                    return _inc(next_chunk)
                 else:
-                    return None
-            except:
-                return _inc(len(self.buffer)-self._pos)
+                    raise
+            except NotStream:
+                next_chunk=len(self.buffer)-self._pos
+                if next_chunk > 0:
+                    return _inc(next_chunk)
+                else:
+                    raise EOFError('The Slurp was exhausted')
     def __next__(self):
         return self.next(1)
     @property
@@ -213,7 +219,7 @@ class Spec(object):
 
 # ----------------
 
-class LexerError:
+class LexerError(Exception):
     def __init__(self, msg, filename, line, column):
         self.msg=msg
         self.filename=filename
@@ -225,6 +231,8 @@ class LexerError:
             self.line,
             self.column,
             self.msg)
+    def __str__(self):
+        return self.msg
 
 # ----------------
 
@@ -243,33 +251,49 @@ class Tokenizer:
             buf=buf[pos:]+tmp
             pos=0
             return (buf,0)
-        cont,rem=True,True
+        cont,rem,buffer_flag=True,True,False
         while cont or rem:
             cont=False
-            if rem and len(buf)-pos < chunk//2:
+            if rem and (buffer_flag or len(buf)-pos < chunk//2):
+                buffer_flag=False
                 try:
                     buf,pos=_buffer(buf,pos)
                 except EOFError:
                     rem=False
+            if len(buf)-pos <= 0:
+                continue
+            longest_match=None
             for spec in self.specs:
                 m=spec.re.match(buf,pos)
-                print(buf,spec,m)
                 if m:
                     value=m.group()
-                    pos+=m.end()
-                    gpos+=m.end()
                     cont=True
-                    yield Token(spec.type,value,
-                                m.start,spec.case,ln)
-                    break
+                    if rem and m.end() == len(buf):
+                        # if we matched to the end, buffer
+                        buffer_flag=True
+                        break
+                    if not longest_match or longest_match[0] < m.end():
+                        longest_match=(
+                            m.end(),
+                            spec.type,
+                            value,
+                            m.start(),
+                            spec.case,
+                            )
             else:
-                print('lexer error',gpos,ln.lines)
-                line,linestart=ln.find_last(gpos)
-                raise Exception('regex match error at {}'.format(gpos))
-                raise LexerError('No regex match in lexer',
-                                 slurp.filename,
-                                 line,
-                                 gpos-linestart)
+                if longest_match:
+                    end,spec_type,value,start,case=longest_match
+                    gpos+=end-pos
+                    pos=end
+                    yield Token(spec_type,value,start,case,ln)
+                elif rem:
+                    buffer_flag=True
+                else:
+                    line,linestart=ln.find_last(gpos)
+                    raise LexerError('No regex match in lexer @<{}>'.format(buf[pos:min(pos+10,len(buf))]),
+                                     slurp.filename,
+                                     line,
+                                     gpos-linestart if linestart else None)
         
 # ----------------
 
