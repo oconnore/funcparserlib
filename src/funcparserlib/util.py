@@ -1,25 +1,7 @@
-# -*- coding: utf-8 -*-
-
-# Copyright (c) 2008/2011 Andrey Vlasovskikh
 #
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
+# Funcparserlib -- A parser library based on parser combinators
+# by Andrey Vlasovskikh et al
 #
-# The above copyright notice and this permission notice shall be included
-# in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 class SyntaxError(Exception):
     'The base class for funcparserlib errors.'
@@ -35,6 +17,8 @@ class SyntaxError(Exception):
         pos = self.args[1]
         s = '%s: ' % pos_to_str(pos) if pos is not None else ''
         return '%s%s' % (s, self.args[0])
+
+# ----------------
 
 def pretty_tree(x, kids, show):
     '''(a, (a -> list(a)), (a -> str)) -> str
@@ -60,10 +44,11 @@ def pretty_tree(x, kids, show):
             return '\n'.join([line] + lines)
     return rec(x, '', ROOT)
 
+# ----------------
+
 def pos_to_str(pos):
     '((int, int), (int, int)) -> str'
     start, end = pos
     sl, sp = start
     el, ep = end
     return '%d,%d-%d,%d' % (sl, sp, el, ep)
-

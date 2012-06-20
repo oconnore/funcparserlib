@@ -5,6 +5,7 @@
 
 __all__ = ['Slurp','Tokenizer','Spec','Token','LexerError','LineNumber']
 import re,io,os,os.path
+import funcparserlib.parser
 
 # ----------------
 
@@ -33,6 +34,8 @@ class Slurp:
                 self.buffer=source.decode('utf8')
         elif isinstance(source,io.IOBase):
             self.stream=source
+        else:
+            raise Exception('Invalid source {}'.format(source))
     def _append(self,chunk):
         if not any(map(lambda x: issubclass(chunk.__class__,x),[str,bytes])):
             raise Exception('Unknown chunk {}'.format(chunk))
@@ -152,33 +155,38 @@ class LineNumber:
 # ----------------
 
 class Token:
-    __slots__ = ['type', 'value', 'pos','case','start','lineno']
-    def __init__(self,type,value,start=None,case=True,lineno=None):
+    __slots__ = ['type', 'value', 'pos','case','start','lineno','parser']
+    def __init__(self,type,value,start=None,case=True,lineno=None,parser=None):
         self.type=type
         self.value=value
         self.case=case
         self.start=start
         self.lineno=lineno
+        self.parser=parser
     def val(self):
-        if self.case or not isinstance(self.value,str):
-            return self.value
+        tval=self.value
+        if not self.case and isinstance(self.value,str):
+            tval=tval.lower()
+        if self.parser:
+            return self.parser(tval)
         else:
-            return self.value.lower()
-    def __eq__(self, other):
-        if not isinstance(other, Token):
+            return tval
+    def __eq__(self, obj):
+        if not isinstance(obj, Token):
             return False
-        pre=self.type==other.type
-        none=self.value is None or other.value is None
+        pre=self.type==obj.type
+        none=self.value is None or obj.value is None
         eq=self.val()==obj.val()
         return pre and (none or eq)
     def __hash__(self):
         return hash(self.type) ^ hash(self.value) ^ hash(self.start)
     def __repr__(self):
-        return 'Token(%r,%r)' % (self.type, self.value)
+        return '#<tk:{} {!r}>'.format(self.type, self.val())
     def ebnf(self):
-        return ("'%s'" % (self.value,)
-                if self.value is not None
-                else '? %s ?' % (self.type,))
+        if self.value:
+            return '{!r}'.format(self.val())
+        else:
+            return '?{}?'.format(self.type)
     @property
     def name(self):
         return self.value
@@ -199,6 +207,8 @@ class Token:
 
 class Spec(object):
     def __init__(self,type,regexp,flags=0,case=True,multiline=False):
+        if len(type) < 1 or type[0]=='_':
+            raise Exception('Types must be >1 character long, and cannot begin with an underscore')
         self.type=type
         self._regexp=regexp
         self._flags=flags
@@ -216,6 +226,9 @@ class Spec(object):
             return self._re
     def __repr__(self):
         return 'Spec(%r, %r, %r)' % (self.type, self._regexp, self._flags)
+    def __lshift__(self,f):
+        self.parser=f
+        return self
 
 # ----------------
 
@@ -238,13 +251,20 @@ class LexerError(Exception):
 
 class Tokenizer:
     def __init__(self,specs,binary=False):
-        self.specs=specs
-        self.binary=binary
-    def run(self,slurp,chunk=4096):
+        self._specs=specs
+        self._binary=binary
+        self._create_token_parsers()
+    def _create_token_parsers(self):
+        """ Creates self.<spec.type> parser objects attached to this Tokenizer """
+        for spec in self._specs:
+            tk=Token(spec.type,None,case=spec.case)
+            tokparser=funcparserlib.parser._Tok(tk)
+            setattr(self, spec.type, tokparser)
+    def _run(self,slurp,chunk=4096):
         ln=LineNumber()
         gpos=0
         pos=0
-        buf=b'' if self.binary else ''
+        buf=b'' if self._binary else ''
         def _buffer(buf,pos):
             tmp,_=slurp.next(chunk)
             ln.track(tmp)
@@ -263,7 +283,7 @@ class Tokenizer:
             if len(buf)-pos <= 0:
                 continue
             longest_match=None
-            for spec in self.specs:
+            for spec in self._specs:
                 m=spec.re.match(buf,pos)
                 if m:
                     value=m.group()
@@ -272,8 +292,9 @@ class Tokenizer:
                         # if we matched to the end, buffer
                         buffer_flag=True
                         break
-                    if not longest_match or longest_match[0] < m.end():
+                    if not longest_match or longest_match[1] < m.end():
                         longest_match=(
+                            spec,
                             m.end(),
                             spec.type,
                             value,
@@ -282,10 +303,11 @@ class Tokenizer:
                             )
             else:
                 if longest_match:
-                    end,spec_type,value,start,case=longest_match
+                    spec,end,spec_type,value,start,case=longest_match
                     gpos+=end-pos
                     pos=end
-                    yield Token(spec_type,value,start,case,ln)
+                    yield Token(spec_type,value,start,case,ln,
+                                spec.parser if hasattr(spec,'parser') else None)
                 elif rem:
                     buffer_flag=True
                 else:

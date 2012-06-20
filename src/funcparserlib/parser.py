@@ -9,7 +9,7 @@ __all__ = [
 ]
 from warnings import warn
 import logging
-from funcparserlib.lexer import Token
+from funcparserlib.lexer import *
 from funcparserlib.util import SyntaxError
 
 # ----------------
@@ -22,6 +22,7 @@ if not hasattr(logging, 'statistics'):
 stats = logging.statistics.setdefault('funcparserlib',
                                       {'memoize': {}})
 
+# ----------------
 
 class ParserError(SyntaxError):
     """User-visible parsing error."""
@@ -43,6 +44,7 @@ class _NoParseError(Exception):
     def __str__(self):
         return self.msg.encode()
 
+# ----------------
 
 class Parser(object):
     """Base class for various parsers.
@@ -132,31 +134,28 @@ class Parser(object):
         """Get the EBNF grammar expression for the parser."""
         return GrammarError('no EBNF expression for an abstract parser')
 
+# ----------------
 
 class _Map(Parser):
     """Interpreting parser."""
-
     def __init__(self, p, f):
         self.p = p
         self.f = f
-
     def __call__(self, tokens, s):
         v, s2 = self.p(tokens, s)
         return self.f(v), s2
-
     def ebnf(self):
         return str(self.p)
 
+# ----------------
 
 class _Seq(Parser):
     """Sequential composition of parsers."""
-
     def __init__(self, p1, p2):
         if isinstance(p1, _Seq):
             self.ps = p1.ps + [p2]
         else:
             self.ps = [p1, p2]
-
     def __call__(self, tokens, s):
         def magic(v1, v2):
             vs = [v for v in [v1, v2] if not isinstance(v, _Ignored)]
@@ -176,21 +175,19 @@ class _Seq(Parser):
             v, s = p(tokens, s)
             res = magic(res, v)
         return res, s
-
     def ebnf(self):
         return ', '.join(ebnf_brackets(str(x)) for x in self.ps)
 
+# ----------------
 
 class _Alt(Parser):
     """Choice composition of parsers."""
-
     def __init__(self, p1, p2):
         if isinstance(p1, _Alt):
             self.ps = p1.ps + [p2]
         else:
             self.ps = [p1, p2]
         self.toks = None
-
     def __call__(self, tokens, s):
         if self.toks is None:
             self.toks = []
@@ -227,10 +224,10 @@ class _Alt(Parser):
                     s = _State(s.pos, e.state.max)
                     continue
             raise e
-
     def ebnf(self):
         return ' | '.join(ebnf_brackets(str(x)) for x in self.ps)
 
+# ----------------
 
 class _Fwd(Parser):
     """Undefined parser that can be used as a forward declaration.
@@ -238,38 +235,38 @@ class _Fwd(Parser):
     You will be able to `define()` it when all the parsers it depends on are
     available.
     """
-
     def __init__(self):
         self.p = None
-
     def define(self, p):
         self.p = p
-
     def __call__(self, tokens, s):
         if self.p:
             return self.p(tokens, s)
         else:
             raise NotImplementedError('you must define() a fwd')
-
+    def uniq(self):
+        return 'id{}'.format(id(self))
     def __repr__(self):
-        return getattr(self, 'name', 'id%d' % id(self))
-
+        if self.p:
+            return self.p.__repr__()
+        else:
+            return '#<fwd {}>'.format(getattr(self,'name',self.uniq()))
     def ebnf(self):
         return str(self.p)
 
+# ----------------
 
 class _Eof(Parser):
     """Throws an exception if any tokens are left in the input unparsed."""
-
     def __call__(self, tokens, s):
         if s.pos >= len(tokens):
             return None, s
         else:
             raise _NoParseError('eof not found', s)
-
     def ebnf(self):
         return '? eof ?'
 
+# ----------------
 
 class _Many(Parser):
     """Repeated application of a parser.
@@ -278,65 +275,64 @@ class _Many(Parser):
     tokens while it successfully parsers them. It returns a list of parsed
     values.
     """
-
     def __init__(self, p):
         self.p = p
-
     def __call__(self, tokens, s):
         # Iterative implementation preventing the stack overflow
         res = []
         try:
             while True:
                 v, s = self.p(tokens, s)
-                res.append(v)
+                if not isinstance(v,_Ignored):
+                    res.append(v)
         except _NoParseError as e:
             return res, _State(s.pos, e.state.max)
-
     def ebnf(self):
         return '{ %s }' % self.p
 
+# ----------------
 
 class _Pure(Parser):
     """Pure parser that returns its result without looking at the input."""
-
     def __init__(self, x):
         self.x = x
-
     def __call__(self, tokens, s):
         return self.x, s
-
     def ebnf(self):
         return '? pure(%s) ?' % (self.x,)
 
+# ----------------
 
 class _Tok(Parser):
     """Parses a token equal to the specified token."""
-
     def __init__(self, token):
         self.tok = token
-
     def __call__(self, tokens, s):
         try:
             t = tokens[s.pos]
         except IndexError:
-            raise _NoParseError('no tokens left in the stream', s)
+            raise _NoParseError('expected {}'.format(self.tok), s)
         if t == self.tok:
             pos = s.pos + 1
             s2 = _State(pos, max(pos, s.max))
             return t, s2
         else:
-            raise _NoParseError('got unexpected token', s)
-
+            raise _NoParseError('got unexpected token {}'.format(t),s)
     def ebnf(self):
         try:
             return self.tok.ebnf()
         except AttributeError:
-            return '? %s ?' % self.tok
+            return '?%s?' % self.tok
 
+# ----------------
 
 def tok(type, value=None):
     return _Tok(Token(type, value))
 
+def a(value,case=True):
+    return _Tok(Token(None,value,case=case))
+
+# ----------------
 
 class _Memoize(Parser):
     def __init__(self, p):
@@ -361,12 +357,14 @@ class _Memoize(Parser):
     def ebnf(self):
         return str(self.p)
 
+# ----------------
 
 def _clear_caches(p):
     for x in all_parsers(p):
         if isinstance(x, _Memoize):
             x.cache = {}
 
+# ----------------
 
 class _State(object):
     """Parsing state that is maintained mainly for error reporting.
@@ -378,24 +376,20 @@ class _State(object):
     def __init__(self, pos=0, max=0):
         self.pos = pos
         self.max = max
-
     def __str__(self):
         return str((self.pos, self.max))
-
     def __repr__(self):
         return '_State(%r, %r)' % (self.pos, self.max)
 
-
 class _Tuple(tuple): pass
-
 
 class _Ignored(object):
     def __init__(self, value):
         self.value = value
-
     def __repr__(self):
-        return '_Ignored(%r)' % (self.value,)
+        return '#<ignored>'
 
+# ----------------
 
 def maybe(p):
     """Return a parser that retuns `None` if parsing fails."""
@@ -403,6 +397,7 @@ def maybe(p):
     q.ebnf = lambda: '[ %s ]' % p
     return q
 
+# ----------------
 
 def skip(p):
     """Return a parser such that its results are ignored by the combinator `+`.
@@ -411,11 +406,13 @@ def skip(p):
     """
     return p >> _Ignored
 
+# ----------------
 
 def oneplus(p):
     """Return a parser that applies the parser `p` one or more times."""
     return p + many(p) >> (lambda x: [x[:-1]]+x[-1])
 
+# ----------------
 
 def name_parser_vars(vars):
     """Name parsers after their variables.
@@ -430,11 +427,13 @@ def name_parser_vars(vars):
         if isinstance(v, Parser):
             v.named(k)
 
+# ----------------
 
 def non_halting(p):
     """Return a non-halting part of parser `p` or `None`."""
     return left_recursive(p) or non_halting_many(p)
 
+# ----------------
 
 def takewhile_included(pred, seq):
     last = False
@@ -447,15 +446,16 @@ def takewhile_included(pred, seq):
             last = True
             yield x
 
+# ----------------
 
 def left_recursive(p, fwds=[], seqs=[]):
     """Return a left-recursive part of parser `p` or `None`."""
     def any_(xs):
+        return
         for x in xs:
             if x:
                 return x
         return None
-
     if isinstance(p, (_Map, _Many, _Memoize)):
         return left_recursive(p.p, fwds, seqs)
     elif isinstance(p, _Fwd):
@@ -477,6 +477,7 @@ def left_recursive(p, fwds=[], seqs=[]):
     else:
         return None
 
+# ----------------
 
 def non_halting_many(p):
     """Return a non-halting `many()` part of parser `p` or `None`."""
@@ -484,6 +485,7 @@ def non_halting_many(p):
                                        not makes_progress(x.p)]
     return rs[0] if len(rs) > 0 else None
 
+# ----------------
 
 def makes_progress(p, fwds=[]):
     """Assert that the parser must consume some tokens in order to succeed."""
@@ -503,6 +505,7 @@ def makes_progress(p, fwds=[]):
     else:
         return False
 
+# ----------------
 
 def ebnf_grammar(p):
     """The EBNF grammar for the parser `p` as the top-level symbol."""
@@ -525,17 +528,20 @@ def ebnf_grammar(p):
     rs, ps = ebnf_rules(p, [])
     return '\n'.join(reversed(rs))
 
+# ----------------
 
 def ebnf_rule(p):
     return '%s = %s;' % (getattr(p, 'name', 'id%d' % id(p)),
                           p.ebnf())
 
+# ----------------
 
 def ebnf_brackets(s):
     return (s if ' ' not in s or
                  any(s.startswith(x) for x in '{[(?')
               else '(%s)' % s)
 
+# ----------------
 
 def non_ll_1_parts(p):
     assert not non_halting(p)
@@ -546,6 +552,7 @@ def non_ll_1_parts(p):
     return [(k, v) for k, v in list(ps.items())
                    if len(v) != len(set(v))]
 
+# ----------------
 
 def all_parsers(p):
     def rec(p, fwds=[]):
@@ -562,6 +569,7 @@ def all_parsers(p):
             return [p]
     return list(set(rec(p)))
 
+# ----------------
 
 def _symbol(s):
     return 'symbol', s
@@ -570,6 +578,7 @@ def _symbol(s):
 _EPSYLON = _symbol('epsylon')
 _MEMOIZE = _symbol('memoize')
 
+# ----------------
 
 def first(p):
     if isinstance(p, _Tok):
@@ -601,10 +610,10 @@ def first(p):
     else:
         raise GrammarError('cannot analyse parser %s' % ebnf_rule(p))
 
+# ----------------
 
 # Aliases for exporting
 eof = _Eof()
-a = _Tok
 many = _Many
 pure = _Pure
 fwd = _Fwd
