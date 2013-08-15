@@ -75,8 +75,11 @@ class Slurp:
                     return _inc(min(len(self.buffer)-self._pos, n))
                 else:
                     return None
-            except:
-                return _inc(len(self.buffer)-self._pos)
+            except Exception as e:
+                if len(self.buffer) > self._pos:
+                    return _inc(len(self.buffer)-self._pos)
+                else:
+                    return None
     def __next__(self):
         return self.next(1)
     @property
@@ -163,7 +166,7 @@ class Token:
             return False
         pre=self.type==other.type
         none=self.value is None or other.value is None
-        eq=self.val()==obj.val()
+        eq=self.val()==other.val()
         return pre and (none or eq)
     def __hash__(self):
         return hash(self.type) ^ hash(self.value) ^ hash(self.start)
@@ -232,37 +235,42 @@ class Tokenizer:
     def __init__(self,specs,binary=False):
         self.specs=specs
         self.binary=binary
-    def run(self,slurp,chunk=4096):
+    def run(self,slurp,chunk=12):
         ln=LineNumber()
         gpos=0
         pos=0
         buf=b'' if self.binary else ''
+        rem=[True]
         def _buffer(buf,pos):
-            tmp,_=slurp.next(chunk)
-            ln.track(tmp)
-            buf=buf[pos:]+tmp
-            pos=0
-            return (buf,0)
-        cont,rem=True,True
-        while cont or rem:
-            cont=False
-            if rem and len(buf)-pos < chunk//2:
-                try:
-                    buf,pos=_buffer(buf,pos)
-                except EOFError:
-                    rem=False
+            tmp=slurp.next(chunk)
+            if tmp!=None:
+                tmp,_=tmp
+                ln.track(tmp)
+                buf=buf[pos:]+tmp
+                pos=0
+                return (buf,0)
+            else:
+                rem[0]=False
+                return (buf,pos)
+        while rem[0] or len(buf)-pos>0:
+            if rem[0] and len(buf)-pos < chunk//2:
+                buf,pos=_buffer(buf,pos)
             for spec in self.specs:
                 m=spec.re.match(buf,pos)
-                print(buf,spec,m)
+                
                 if m:
+                    if rem[0] and m.end() == len(buf):
+                        buf,pos=_buffer(buf,pos)
+                        break
+                    dist=m.end()-m.start()
                     value=m.group()
-                    pos+=m.end()
-                    gpos+=m.end()
-                    cont=True
+                    pos+=dist
+                    gpos+=dist
                     yield Token(spec.type,value,
                                 m.start,spec.case,ln)
                     break
             else:
+                print('le: <{}>'.format(buf[pos:]),len(buf)-pos)
                 print('lexer error',gpos,ln.lines)
                 line,linestart=ln.find_last(gpos)
                 raise Exception('regex match error at {}'.format(gpos))
